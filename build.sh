@@ -122,24 +122,11 @@ build_one_target() {
             done
         fi
 
-        # Generate the APK repository index (packages.adb).
+        # Generate and sign the APK repository index (packages.adb).
+        # With CONFIG_SIGNED_PACKAGES=y and key-build.pem in place, this calls
+        # apk mkndx --sign-key internally — the same code path as the official
+        # OpenWrt feed, ensuring the key ID format matches what apk update expects.
         make package/index V=s
-
-        # Explicitly re-sign the index with adbsign — belt-and-suspenders in case
-        # make package/index used apk-index (v2, unsigned) rather than apk-mkndx (v3).
-        # adbsign handles v3 indexes and will resign if already signed.
-        if [ -n "${SIGNING_KEY:-}" ]; then
-            for adb in bin/packages/"$arch"/*/packages.adb; do
-                [ -f "$adb" ] || continue
-                echo "=== Signing $adb with adbsign ==="
-                staging_dir/host/bin/apk adbsign \
-                    --sign-key key-build.pem \
-                    "$adb"
-            done
-        fi
-
-        echo "=== Files in bin/packages/$arch/ ==="
-        find "bin/packages/$arch" -maxdepth 2 -type f | sort
     )
 
     outdir="$DIST/$arch"
