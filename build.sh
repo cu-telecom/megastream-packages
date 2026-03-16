@@ -98,8 +98,22 @@ build_one_target() {
     (
         cd "$sdk_dir"
 
+        # Seed CONFIG_SIGNED_PACKAGES before defconfig so that it is preserved
+        # (appending after defconfig is too late — make package/index reads the
+        # config at the start of the target and won't see late additions).
+        if [ -n "${SIGNING_KEY:-}" ]; then
+            echo 'CONFIG_SIGNED_PACKAGES=y' > .config
+        fi
+
         # Prepare toolchain state
         make defconfig
+
+        echo "=== CONFIG_SIGNED_PACKAGES in .config ==="
+        grep -i signed .config || echo "(not found)"
+        echo "=== SDK apk tool version ==="
+        staging_dir/host/bin/apk --version 2>&1 || true
+        echo "=== SDK apk tool help ==="
+        staging_dir/host/bin/apk --help 2>&1 || true
 
         # Build selected packages or all local packages
         if [ "$#" -gt 3 ]; then
@@ -119,18 +133,8 @@ build_one_target() {
         # feed URL returns 404 because only .apk files exist, not the index.
         make package/index V=s
 
-        # Sign the repository index directly using the SDK's apk tool.
-        # This bypasses CONFIG_SIGNED_PACKAGES (which is unreliable when appended
-        # after defconfig) and guarantees the signature is present.
-        if [ -n "${SIGNING_KEY:-}" ]; then
-            for adb in bin/packages/"$arch"/*/packages.adb; do
-                [ -f "$adb" ] || continue
-                staging_dir/host/bin/apk adbsign \
-                    --sign-key key-build.pem \
-                    -- "$adb"
-                echo "=== Signed $adb ==="
-            done
-        fi
+        echo "=== Files generated in bin/packages/$arch/ ==="
+        find "bin/packages/$arch" -maxdepth 2 -type f | sort
     )
 
     outdir="$DIST/$arch"
