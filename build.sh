@@ -90,9 +90,9 @@ build_one_target() {
     if [ -n "${SIGNING_KEY:-}" ]; then
         printf '%s' "$SIGNING_KEY" | base64 -d > "$sdk_dir/key-build.pem"
         openssl ec -in "$sdk_dir/key-build.pem" -pubout -out "$sdk_dir/key-build.pub" 2>/dev/null
-        echo 'CONFIG_SIGNED_PACKAGES=y' > "$sdk_dir/.config"
         cp "$sdk_dir/key-build.pub" "$DIST/megastream.pub"
-        echo "=== Package signing enabled ==="
+        echo "=== Signing key fingerprint (should match /etc/apk/keys/megastream.pem on device) ==="
+        openssl ec -pubin -in "$sdk_dir/key-build.pub" -text -noout 2>/dev/null
     fi
 
     (
@@ -100,6 +100,11 @@ build_one_target() {
 
         # Prepare toolchain state
         make defconfig
+
+        # Enable package signing after defconfig so the setting is not reset to its default
+        if [ -n "${SIGNING_KEY:-}" ]; then
+            echo 'CONFIG_SIGNED_PACKAGES=y' >> .config
+        fi
 
         # Build selected packages or all local packages
         if [ "$#" -gt 3 ]; then
