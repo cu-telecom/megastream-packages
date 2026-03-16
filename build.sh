@@ -19,7 +19,7 @@ if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! co
         debian:bookworm \
         sh -euxc '
             apt-get update
-            apt-get install -y ca-certificates curl git make python3 rsync unzip zstd file gawk grep sed findutils bash xz-utils
+            apt-get install -y ca-certificates curl git make python3 rsync unzip zstd file gawk grep sed findutils bash xz-utils openssl
             /work/build.sh "$@"
         ' sh "$@"
 fi
@@ -84,6 +84,17 @@ build_one_target() {
     # Falls back to 0.0 if no tag is present (e.g. local dev builds).
     pkg_version="$(git describe --tags --exact-match 2>/dev/null | sed 's/^v//' || echo 0.0)"
 
+    # If a signing key is provided, install it into the SDK and enable signed packages.
+    # The public key is derived from the private key and copied to dist/ so users can
+    # trust it by placing it in /etc/apk/keys/ on their device.
+    if [ -n "${SIGNING_KEY:-}" ]; then
+        printf '%s\n' "$SIGNING_KEY" > "$sdk_dir/key-build.pem"
+        openssl ec -in "$sdk_dir/key-build.pem" -pubout -out "$sdk_dir/key-build.pub" 2>/dev/null
+        echo 'CONFIG_SIGNED_PACKAGES=y' > "$sdk_dir/.config"
+        cp "$sdk_dir/key-build.pub" "$DIST/megastream.pub"
+        echo "=== Package signing enabled ==="
+    fi
+
     (
         cd "$sdk_dir"
 
@@ -122,7 +133,6 @@ build_one_target() {
     echo "Output copied to $outdir"
 }
 
-# shellcheck disable=SC2086
 for row in $TARGETS; do
     :
 done
