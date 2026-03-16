@@ -4,7 +4,7 @@ USE_PROCD=1
 START=95
 STOP=10
 
-SCRIPT=/usr/local/bin/megastream-led-driver.sh
+SCRIPT=/usr/bin/megastream-led-driver
 
 start_service() {
     procd_open_instance

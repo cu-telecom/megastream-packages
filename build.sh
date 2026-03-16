@@ -1,103 +1,140 @@
 #!/bin/sh
-set -e
+set -eu
 
+VERSION="${VERSION:-25.12.0}"
+FEED_NAME="${FEED_NAME:-megastream}"
 DIST="$(pwd)/dist"
-TMPBASE=$(mktemp -d)
-trap 'rm -rf "$TMPBASE"' EXIT
+WORK="$(pwd)/.work"
 
-# Derive version from git tag (e.g. v1.0.0 -> 1.0.0-r0, v1.0.0-3-gabcdef -> 1.0.0-r3)
-_tag=$(git describe --tags --always 2>/dev/null | sed 's/^v//' || echo "0.0.0")
-GIT_VER=$(echo "$_tag" | sed 's/-\([0-9]*\)-g[0-9a-f]*$/-r\1/')
-echo "$GIT_VER" | grep -q '\-r' || GIT_VER="${GIT_VER}-r0"
+# target subtarget arch
+TARGETS="${TARGETS:-\
+ath79 generic mips_24kc
+}"
 
-build_package() {
-    PKGROOT="$(cd "$1" && pwd)"
-
-    PKG_NAME="" PKG_VER="" PKG_ARCH="all" PKG_DESC="" PKG_LICENSE="" PKG_DEPENDS="" PKG_URL=""
-    unset -f package 2>/dev/null || true
-
-    . "$PKGROOT/build.sh"
-
-    [ -z "$PKG_VER" ] && PKG_VER="$GIT_VER"
-
-    STAGEDIR="$TMPBASE/$PKG_NAME/stage"
-    CTRLDIR="$TMPBASE/$PKG_NAME/control"
-    mkdir -p "$STAGEDIR" "$CTRLDIR"
-
-    PKGDIR="$STAGEDIR"
-    (cd "$PKGROOT" && package)
-
-    SIZE=$(find "$STAGEDIR" -type f -exec wc -c {} + 2>/dev/null | awk 'END{print $1+0}')
-
-    {
-        printf 'pkgname = %s\n'  "$PKG_NAME"
-        printf 'pkgver = %s\n'   "$PKG_VER"
-        printf 'arch = %s\n'     "$PKG_ARCH"
-        printf 'size = %s\n'     "$SIZE"
-        printf 'pkgdesc = %s\n'  "$PKG_DESC"
-        printf 'url = %s\n'      "${PKG_URL:-}"
-        printf 'builddate = %s\n' "$(date +%s)"
-        printf 'packager = Custom\n'
-        printf 'license = %s\n'  "$PKG_LICENSE"
-        for dep in $PKG_DEPENDS; do
-            printf 'depend = %s\n' "$dep"
-        done
-    } > "$CTRLDIR/.PKGINFO"
-
-    [ -f "$PKGROOT/post-install" ] && \
-        install -m755 "$PKGROOT/post-install" "$CTRLDIR/.post-install"
-
-    CTRL_TGZ="$TMPBASE/$PKG_NAME/control.tar.gz"
-    DATA_TGZ="$TMPBASE/$PKG_NAME/data.tar.gz"
-    APK_FILE="$DIST/${PKG_NAME}-${PKG_VER}.apk"
-
-    mkdir -p "$DIST"
-    (cd "$CTRLDIR" && tar czf "$CTRL_TGZ" .)
-    (cd "$STAGEDIR" && tar czf "$DATA_TGZ" .)
-    cat "$CTRL_TGZ" "$DATA_TGZ" > "$APK_FILE"
-
-    CHECKSUM="Q1$(openssl sha1 -binary "$CTRL_TGZ" | base64)"
-    CSIZE=$(wc -c < "$APK_FILE")
-
-    {
-        printf 'C:%s\n' "$CHECKSUM"
-        printf 'P:%s\n' "$PKG_NAME"
-        printf 'V:%s\n' "$PKG_VER"
-        printf 'A:%s\n' "$PKG_ARCH"
-        printf 'S:%s\n' "$CSIZE"
-        printf 'I:%s\n' "$SIZE"
-        printf 'T:%s\n' "$PKG_DESC"
-        printf 'U:%s\n' "${PKG_URL:-}"
-        printf 'L:%s\n' "$PKG_LICENSE"
-        printf 'o:%s\n' "$PKG_NAME"
-        printf 'm:Custom\n'
-        printf 't:%s\n' "$(date +%s)"
-        [ -n "$PKG_DEPENDS" ] && printf 'D:%s\n' "$PKG_DEPENDS"
-        printf '\n'
-    } > "${APK_FILE}.index"
-
-    echo "Built: $APK_FILE"
-}
-
-# Build specified packages or all
-if [ $# -gt 0 ]; then
-    for pkg in "$@"; do
-        build_package "$pkg"
-    done
-else
-    for pkgdir in packages/*/; do
-        [ -f "$pkgdir/build.sh" ] && build_package "$pkgdir"
-    done
+# Run inside a Debian container if not already in one with the needed tools
+if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1 || ! command -v zstd >/dev/null 2>&1; then
+    exec docker run --rm \
+        -v "$(pwd):/work" \
+        -w /work \
+        debian:bookworm \
+        sh -euxc '
+            apt-get update
+            apt-get install -y ca-certificates curl git make python3 rsync unzip zstd file gawk grep sed findutils bash xz-utils
+            /work/build.sh "$@"
+        ' sh "$@"
 fi
 
-# Regenerate APKINDEX from all sidecar index files in dist/
-echo "Generating APKINDEX.tar.gz..."
-: > "$TMPBASE/APKINDEX"
-for idx in "$DIST"/*.apk.index; do
-    [ -f "$idx" ] && cat "$idx" >> "$TMPBASE/APKINDEX"
-done
-tar czf "$DIST/APKINDEX.tar.gz" -C "$TMPBASE" APKINDEX
+mkdir -p "$DIST" "$WORK"
 
-[ -f index.html ] && cp index.html "$DIST/index.html"
+find_sdk_url() {
+    target="$1"
+    subtarget="$2"
+    base="https://downloads.openwrt.org/releases/${VERSION}/targets/${target}/${subtarget}/"
+
+    page="$(curl -fsSL "$base")"
+    sdk="$(printf '%s\n' "$page" | grep -oE "openwrt-sdk-[^\"]+Linux-x86_64\.tar\.zst" | head -n1)"
+
+    if [ -z "$sdk" ]; then
+        echo "Could not find SDK in $base" >&2
+        exit 1
+    fi
+
+    printf '%s%s\n' "$base" "$sdk"
+}
+
+build_one_target() {
+    target="$1"
+    subtarget="$2"
+    arch="$3"
+
+    sdk_url="$(find_sdk_url "$target" "$subtarget")"
+    sdk_file="$WORK/$(basename "$sdk_url")"
+    sdk_dir="$WORK/sdk-${target}-${subtarget}"
+
+    echo "=== Building for $target/$subtarget ($arch) ==="
+    echo "SDK: $sdk_url"
+
+    rm -rf "$sdk_dir"
+
+    curl -fL "$sdk_url" -o "$sdk_file"
+
+    # Derive the extracted directory name from the tarball filename (avoids broken-pipe
+    # from "tar -tf | head -n1" which causes set -e to abort under some sh implementations).
+    # Do NOT mkdir $sdk_dir before the mv — if the destination already exists as a directory,
+    # mv nests the source inside it instead of renaming, putting scripts/ one level too deep.
+    extracted="$(basename "${sdk_file%.tar.zst}")"
+    tar --zstd -xf "$sdk_file" -C "$WORK"
+    mv "$WORK/$extracted" "$sdk_dir"
+
+    # Suppress the default feeds — an empty feeds.conf prevents the SDK from
+    # pulling in every upstream feed during make defconfig.
+    : > "$sdk_dir/feeds.conf"
+
+    # Copy local package recipes directly into package/$FEED_NAME/.
+    # The SDK always classifies these as the "base" feed internally; the output
+    # lands in bin/packages/$arch/base/ regardless of directory naming.
+    mkdir -p "$sdk_dir/package/$FEED_NAME"
+    for pkgdir in packages/*; do
+        [ -d "$pkgdir" ] || continue
+        [ -f "$pkgdir/Makefile" ] || continue
+        rsync -a "$pkgdir/" "$sdk_dir/package/$FEED_NAME/$(basename "$pkgdir")/"
+    done
+
+    # Derive package version from the current git tag (e.g. v1.2 -> 1.2).
+    # Falls back to 0.0 if no tag is present (e.g. local dev builds).
+    pkg_version="$(git describe --tags --exact-match 2>/dev/null | sed 's/^v//' || echo 0.0)"
+
+    (
+        cd "$sdk_dir"
+
+        # Prepare toolchain state
+        make defconfig
+
+        # Build selected packages or all local packages
+        if [ "$#" -gt 3 ]; then
+            shift 3
+            for pkg in "$@"; do
+                make "package/$FEED_NAME/$pkg/compile" PKG_VERSION="$pkg_version" V=s
+            done
+        else
+            for pkgdir in package/"$FEED_NAME"/*; do
+                [ -d "$pkgdir" ] || continue
+                pkg="$(basename "$pkgdir")"
+                make "package/$FEED_NAME/$pkg/compile" PKG_VERSION="$pkg_version" V=s
+            done
+        fi
+
+        # Generate the APK repository index (packages.adb) — without this the
+        # feed URL returns 404 because only .apk files exist, not the index.
+        make package/index V=s
+    )
+
+    outdir="$DIST/$arch"
+    mkdir -p "$outdir"
+
+    # Collect built APKs from anywhere under bin/packages/$arch/ — the SDK
+    # places packages in a subdirectory determined by its internal feed logic
+    # (typically "base"), not necessarily $FEED_NAME.
+    find "$sdk_dir/bin/packages/$arch" -maxdepth 2 -type f \
+        \( -name '*.apk' -o -name 'packages.adb' -o -name 'packages.adb.*' -o -name 'index.json' \) \
+        -exec cp {} "$outdir/" \;
+
+    echo "Output copied to $outdir"
+}
+
+# shellcheck disable=SC2086
+for row in $TARGETS; do
+    :
+done
+
+# Parse TARGETS three fields at a time
+set -- $TARGETS
+while [ "$#" -ge 3 ]; do
+    target="$1"
+    subtarget="$2"
+    arch="$3"
+    shift 3
+    build_one_target "$target" "$subtarget" "$arch" "$@"
+done
 
 echo "Feed ready in $DIST/"

@@ -36,7 +36,6 @@ check_status() {
     handshake=$(wg show "$IFACE" dump | awk 'NR==2 {print $5}')
 
     if [ -z "$handshake" ] || [ "$handshake" = "0" ]; then
-        echo "status: no-handshake"
         set_led 0
         return 1
     fi
@@ -44,11 +43,9 @@ check_status() {
     age=$((now - handshake))
 
     if [ "$age" -lt "$MAX_AGE" ]; then
-        echo "status: ok (last handshake ${age}s ago)"
         set_led 1
         return 0
     else
-        echo "status: stale (last handshake ${age}s ago)"
         set_led 0
         return 1
     fi

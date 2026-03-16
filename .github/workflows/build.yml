@@ -2,8 +2,11 @@ name: Build and publish feed
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   contents: read
@@ -14,14 +17,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0  # needed for git describe
 
       - name: Build packages
         run: ./build.sh
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: dist/
 
