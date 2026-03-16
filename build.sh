@@ -101,11 +101,6 @@ build_one_target() {
         # Prepare toolchain state
         make defconfig
 
-        # Enable package signing after defconfig so the setting is not reset to its default
-        if [ -n "${SIGNING_KEY:-}" ]; then
-            echo 'CONFIG_SIGNED_PACKAGES=y' >> .config
-        fi
-
         # Build selected packages or all local packages
         if [ "$#" -gt 3 ]; then
             shift 3
@@ -123,6 +118,19 @@ build_one_target() {
         # Generate the APK repository index (packages.adb) — without this the
         # feed URL returns 404 because only .apk files exist, not the index.
         make package/index V=s
+
+        # Sign the repository index directly using the SDK's apk tool.
+        # This bypasses CONFIG_SIGNED_PACKAGES (which is unreliable when appended
+        # after defconfig) and guarantees the signature is present.
+        if [ -n "${SIGNING_KEY:-}" ]; then
+            for adb in bin/packages/"$arch"/*/packages.adb; do
+                [ -f "$adb" ] || continue
+                staging_dir/host/bin/apk adbsign \
+                    --sign-key key-build.pem \
+                    -- "$adb"
+                echo "=== Signed $adb ==="
+            done
+        fi
     )
 
     outdir="$DIST/$arch"
