@@ -108,13 +108,6 @@ build_one_target() {
         # Prepare toolchain state
         make defconfig
 
-        echo "=== CONFIG_SIGNED_PACKAGES in .config ==="
-        grep -i signed .config || echo "(not found)"
-        echo "=== SDK apk tool version ==="
-        staging_dir/host/bin/apk --version 2>&1 || true
-        echo "=== SDK apk tool help ==="
-        staging_dir/host/bin/apk --help 2>&1 || true
-
         # Build selected packages or all local packages
         if [ "$#" -gt 3 ]; then
             shift 3
@@ -129,11 +122,23 @@ build_one_target() {
             done
         fi
 
-        # Generate the APK repository index (packages.adb) — without this the
-        # feed URL returns 404 because only .apk files exist, not the index.
+        # Generate the APK repository index (packages.adb).
         make package/index V=s
 
-        echo "=== Files generated in bin/packages/$arch/ ==="
+        # Explicitly re-sign the index with adbsign — belt-and-suspenders in case
+        # make package/index used apk-index (v2, unsigned) rather than apk-mkndx (v3).
+        # adbsign handles v3 indexes and will resign if already signed.
+        if [ -n "${SIGNING_KEY:-}" ]; then
+            for adb in bin/packages/"$arch"/*/packages.adb; do
+                [ -f "$adb" ] || continue
+                echo "=== Signing $adb with adbsign ==="
+                staging_dir/host/bin/apk adbsign \
+                    --sign-key key-build.pem \
+                    "$adb"
+            done
+        fi
+
+        echo "=== Files in bin/packages/$arch/ ==="
         find "bin/packages/$arch" -maxdepth 2 -type f | sort
     )
 
