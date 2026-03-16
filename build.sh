@@ -88,7 +88,7 @@ build_one_target() {
     # The public key is derived from the private key and copied to dist/ so users can
     # trust it by placing it in /etc/apk/keys/ on their device.
     if [ -n "${SIGNING_KEY:-}" ]; then
-        printf '%s\n' "$SIGNING_KEY" > "$sdk_dir/key-build.pem"
+        printf '%s' "$SIGNING_KEY" | base64 -d > "$sdk_dir/key-build.pem"
         openssl ec -in "$sdk_dir/key-build.pem" -pubout -out "$sdk_dir/key-build.pub" 2>/dev/null
         echo 'CONFIG_SIGNED_PACKAGES=y' > "$sdk_dir/.config"
         cp "$sdk_dir/key-build.pub" "$DIST/megastream.pub"
