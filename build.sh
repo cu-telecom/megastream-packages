@@ -139,6 +139,7 @@ build_one_target() {
                 echo "=== Signing ${adb_dir}packages.adb ==="
                 # shellcheck disable=SC2086
                 staging_dir/host/bin/apk mkndx \
+                    --allow-untrusted \
                     --sign-key "$WORK/key-build.pem" \
                     --output "${adb_dir}packages.adb" \
                     "$adb_dir"*.apk
