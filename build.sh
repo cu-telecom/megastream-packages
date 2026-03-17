@@ -98,15 +98,22 @@ build_one_target() {
     (
         cd "$sdk_dir"
 
-        # Seed CONFIG_SIGNED_PACKAGES before defconfig so that it is preserved
-        # (appending after defconfig is too late — make package/index reads the
-        # config at the start of the target and won't see late additions).
+        # Seed CONFIG_SIGNED_PACKAGES before defconfig so that it is preserved.
         if [ -n "${SIGNING_KEY:-}" ]; then
             echo 'CONFIG_SIGNED_PACKAGES=y' > .config
         fi
 
         # Prepare toolchain state
         make defconfig
+
+        # Re-install our signing key AFTER defconfig. The SDK's defconfig calls
+        # scripts/gen_key.sh which generates a random key-build.pem, overwriting
+        # whatever we placed there earlier. Re-writing here ensures make package/index
+        # signs with the key that corresponds to the megastream.pub on the device.
+        if [ -n "${SIGNING_KEY:-}" ]; then
+            printf '%s' "$SIGNING_KEY" | base64 -d > key-build.pem
+            openssl ec -in key-build.pem -pubout -out key-build.pub 2>/dev/null
+        fi
 
         # Build selected packages or all local packages
         if [ "$#" -gt 3 ]; then
