@@ -84,24 +84,21 @@ build_one_target() {
     # Falls back to 0.0 if no tag is present (e.g. local dev builds).
     pkg_version="$(git describe --tags --exact-match 2>/dev/null | sed 's/^v//' || echo 0.0)"
 
-    # If a signing key is provided, install it into the SDK and enable signed packages.
-    # The public key is derived from the private key and copied to dist/ so users can
-    # trust it by placing it in /etc/apk/keys/ on their device.
+    # Decode the signing key into the WORK directory (outside sdk_dir) so the SDK
+    # can never overwrite it. Convert to traditional EC format so the APK tool can
+    # read it regardless of whether SIGNING_KEY was generated as PKCS8 or EC format.
     if [ -n "${SIGNING_KEY:-}" ]; then
-        printf '%s' "$SIGNING_KEY" | base64 -d > "$sdk_dir/key-build.pem"
-        openssl ec -in "$sdk_dir/key-build.pem" -pubout -out "$sdk_dir/key-build.pub" 2>/dev/null
-        cp "$sdk_dir/key-build.pub" "$DIST/megastream.pub"
+        _raw="$WORK/key-build-raw.pem"
+        printf '%s' "$SIGNING_KEY" | base64 -d > "$_raw"
+        openssl ec -in "$_raw" -out "$WORK/key-build.pem" 2>/dev/null
+        rm -f "$_raw"
+        openssl ec -in "$WORK/key-build.pem" -pubout -out "$DIST/megastream.pub" 2>/dev/null
         echo "=== Signing key fingerprint (should match /etc/apk/keys/megastream.pem on device) ==="
-        openssl ec -pubin -in "$sdk_dir/key-build.pub" -text -noout 2>/dev/null
+        openssl ec -pubin -in "$DIST/megastream.pub" -text -noout 2>/dev/null
     fi
 
     (
         cd "$sdk_dir"
-
-        # Seed CONFIG_SIGNED_PACKAGES before defconfig so that it is preserved.
-        if [ -n "${SIGNING_KEY:-}" ]; then
-            echo 'CONFIG_SIGNED_PACKAGES=y' > .config
-        fi
 
         # Prepare toolchain state
         make defconfig
@@ -120,25 +117,28 @@ build_one_target() {
             done
         fi
 
-        # Re-install signing key immediately before index generation.
-        # The SDK (defconfig and possibly compile steps) calls scripts/gen_key.sh
-        # which generates a random key-build.pem. We overwrite it here at the last
-        # moment so make package/index signs with our key.
-        # We also pipe through `openssl ec` to normalise to traditional EC private
-        # key format (BEGIN EC PRIVATE KEY) in case SIGNING_KEY is PKCS8 — the SDK
-        # apk tools may not accept PKCS8 and silently fall back to a generated key.
-        if [ -n "${SIGNING_KEY:-}" ]; then
-            printf '%s' "$SIGNING_KEY" | base64 -d | openssl ec -out key-build.pem 2>/dev/null
-            openssl ec -in key-build.pem -pubout -out key-build.pub 2>/dev/null
-            echo "=== key-build.pem SHA256 (must be stable across builds) ==="
-            sha256sum key-build.pem
-        fi
-
-        # Generate and sign the APK repository index (packages.adb).
-        # With CONFIG_SIGNED_PACKAGES=y and key-build.pem in place, this calls
-        # apk mkndx --sign-key internally — the same code path as the official
-        # OpenWrt feed, ensuring the key ID format matches what apk update expects.
+        # Generate an unsigned repository index.
         make package/index V=s
+
+        # Sign the index directly with apk mkndx using our key stored outside sdk_dir.
+        # The SDK's own signing (CONFIG_SIGNED_PACKAGES / scripts/gen_key.sh) generates
+        # a fresh random key every build; we bypass it entirely by regenerating the index
+        # ourselves with our stable key.
+        if [ -n "${SIGNING_KEY:-}" ]; then
+            for adb_dir in bin/packages/"$arch"/*/; do
+                [ -d "$adb_dir" ] || continue
+                # Check at least one .apk exists in this subdir
+                found=0
+                for _apk in "$adb_dir"*.apk; do [ -f "$_apk" ] && found=1 && break; done
+                [ "$found" = 1 ] || continue
+                echo "=== Signing ${adb_dir}packages.adb ==="
+                # shellcheck disable=SC2086
+                staging_dir/host/bin/apk mkndx \
+                    --sign-key "$WORK/key-build.pem" \
+                    --output "${adb_dir}packages.adb" \
+                    "$adb_dir"*.apk
+            done
+        fi
     )
 
     outdir="$DIST/$arch"
