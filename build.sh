@@ -11,6 +11,10 @@ TARGETS="${TARGETS:-\
 ath79 generic mips_24kc
 }"
 
+# Additional arches to serve by copying the built all-arch packages and
+# re-signing the index — no second SDK download needed.
+COPY_ARCHES="${COPY_ARCHES:-powerpc_8548}"
+
 # Run inside a Debian container if not already in one with the needed tools
 if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1 || ! command -v zstd >/dev/null 2>&1; then
     exec docker run --rm \
@@ -174,5 +178,50 @@ while [ "$#" -ge 3 ]; do
     shift 3
     build_one_target "$target" "$subtarget" "$arch" "$@"
 done
+
+# Derive the primary arch (first entry in TARGETS) for use as the copy source.
+set -- $TARGETS
+primary_arch="$3"
+
+# For each extra arch, copy the built all-arch packages and re-sign the index
+# using the apk binary from whichever SDK was already downloaded.
+if [ -n "${COPY_ARCHES:-}" ]; then
+    apk_bin=""
+    for _sdk in "$WORK"/sdk-*/; do
+        [ -x "${_sdk}staging_dir/host/bin/apk" ] && apk_bin="${_sdk}staging_dir/host/bin/apk" && break
+    done
+
+    for dst_arch in $COPY_ARCHES; do
+        echo "=== Copying $primary_arch -> $dst_arch ==="
+        src="$DIST/$primary_arch"
+        dst="$DIST/$dst_arch"
+        mkdir -p "$dst"
+
+        for _apk in "$src"/*.apk; do
+            [ -f "$_apk" ] && cp "$_apk" "$dst/"
+        done
+
+        if [ -n "$apk_bin" ]; then
+            found=0
+            for _apk in "$dst"/*.apk; do [ -f "$_apk" ] && found=1 && break; done
+            if [ "$found" = 1 ]; then
+                if [ -n "${SIGNING_KEY:-}" ]; then
+                    "$apk_bin" mkndx \
+                        --allow-untrusted \
+                        --sign-key "$WORK/key-build.pem" \
+                        --output "$dst/packages.adb" \
+                        "$dst"/*.apk
+                else
+                    "$apk_bin" mkndx \
+                        --allow-untrusted \
+                        --output "$dst/packages.adb" \
+                        "$dst"/*.apk
+                fi
+            fi
+        else
+            echo "WARNING: no apk binary found — skipping index generation for $dst_arch" >&2
+        fi
+    done
+fi
 
 echo "Feed ready in $DIST/"
