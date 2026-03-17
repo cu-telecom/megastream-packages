@@ -84,15 +84,20 @@ build_one_target() {
     # Falls back to 0.0 if no tag is present (e.g. local dev builds).
     pkg_version="$(git describe --tags --exact-match 2>/dev/null | sed 's/^v//' || echo 0.0)"
 
-    # Decode the signing key into the WORK directory (outside sdk_dir) so the SDK
-    # can never overwrite it. Convert to traditional EC format so the APK tool can
-    # read it regardless of whether SIGNING_KEY was generated as PKCS8 or EC format.
+    # Decode and normalise the signing key. The SDK generates private-key.pem /
+    # public-key.pem as make file targets; pre-placing them here prevents make
+    # from regenerating a random key during the first package compile step.
     if [ -n "${SIGNING_KEY:-}" ]; then
         _raw="$WORK/key-build-raw.pem"
         printf '%s' "$SIGNING_KEY" | base64 -d > "$_raw"
+        # Normalise to traditional EC format (BEGIN EC PRIVATE KEY) in case the
+        # secret was stored as PKCS8; write to both the WORK dir (safe from SDK)
+        # and the SDK dir under the names the SDK actually uses.
         openssl ec -in "$_raw" -out "$WORK/key-build.pem" 2>/dev/null
+        cp "$WORK/key-build.pem" "$sdk_dir/private-key.pem"
+        openssl ec -in "$sdk_dir/private-key.pem" -pubout -out "$sdk_dir/public-key.pem" 2>/dev/null
+        cp "$sdk_dir/public-key.pem" "$DIST/megastream.pub"
         rm -f "$_raw"
-        openssl ec -in "$WORK/key-build.pem" -pubout -out "$DIST/megastream.pub" 2>/dev/null
         echo "=== Signing key fingerprint (should match /etc/apk/keys/megastream.pem on device) ==="
         openssl ec -pubin -in "$DIST/megastream.pub" -text -noout 2>/dev/null
     fi
