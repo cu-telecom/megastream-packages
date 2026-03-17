@@ -106,15 +106,6 @@ build_one_target() {
         # Prepare toolchain state
         make defconfig
 
-        # Re-install our signing key AFTER defconfig. The SDK's defconfig calls
-        # scripts/gen_key.sh which generates a random key-build.pem, overwriting
-        # whatever we placed there earlier. Re-writing here ensures make package/index
-        # signs with the key that corresponds to the megastream.pub on the device.
-        if [ -n "${SIGNING_KEY:-}" ]; then
-            printf '%s' "$SIGNING_KEY" | base64 -d > key-build.pem
-            openssl ec -in key-build.pem -pubout -out key-build.pub 2>/dev/null
-        fi
-
         # Build selected packages or all local packages
         if [ "$#" -gt 3 ]; then
             shift 3
@@ -127,6 +118,20 @@ build_one_target() {
                 pkg="$(basename "$pkgdir")"
                 make "package/$FEED_NAME/$pkg/compile" PKG_VERSION="$pkg_version" V=s
             done
+        fi
+
+        # Re-install signing key immediately before index generation.
+        # The SDK (defconfig and possibly compile steps) calls scripts/gen_key.sh
+        # which generates a random key-build.pem. We overwrite it here at the last
+        # moment so make package/index signs with our key.
+        # We also pipe through `openssl ec` to normalise to traditional EC private
+        # key format (BEGIN EC PRIVATE KEY) in case SIGNING_KEY is PKCS8 — the SDK
+        # apk tools may not accept PKCS8 and silently fall back to a generated key.
+        if [ -n "${SIGNING_KEY:-}" ]; then
+            printf '%s' "$SIGNING_KEY" | base64 -d | openssl ec -out key-build.pem 2>/dev/null
+            openssl ec -in key-build.pem -pubout -out key-build.pub 2>/dev/null
+            echo "=== key-build.pem SHA256 (must be stable across builds) ==="
+            sha256sum key-build.pem
         fi
 
         # Generate and sign the APK repository index (packages.adb).
