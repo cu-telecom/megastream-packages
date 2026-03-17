@@ -25,6 +25,7 @@ if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! co
 fi
 
 mkdir -p "$DIST" "$WORK"
+[ -f index.html ] && cp index.html "$DIST/"
 
 find_sdk_url() {
     target="$1"
