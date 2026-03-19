@@ -5,6 +5,14 @@
 DRY_RUN=0
 [ "$1" = "--test" ] && DRY_RUN=1
 
+CLIENT_CERT=$(uci get ztp.config.cert 2>/dev/null || echo "/etc/ssl/certs/client.crt")
+CLIENT_KEY=$(uci get ztp.config.key 2>/dev/null || echo "/etc/ssl/private/client.key")
+
+if [ ! -f "$CLIENT_CERT" ] || [ ! -f "$CLIENT_KEY" ]; then
+    logger -s -t ztp "Client cert or key not found (cert: $CLIENT_CERT, key: $CLIENT_KEY), skipping until next run"
+    exit 0
+fi
+
 SERVER=$(uci get ztp.config.server 2>/dev/null || echo "http://192.168.1.1/config")
 MAC=$(cat /sys/class/net/$(uci get network.wan.device)/address | tr -d ':' | awk '{print toupper($0)}')
 CONFIG_URL="${SERVER}/${MAC}"
@@ -27,6 +35,8 @@ fetch_config() {
     logger -s -t ztp "Fetching config..."
     HTTP_CODE=$(curl -s \
         --max-time 30 \
+        --cert "$CLIENT_CERT" \
+        --key "$CLIENT_KEY" \
         -o "$TMP_CONFIG" \
         -D "$TMP_HEADERS" \
         -w "%{http_code}" \
@@ -179,15 +189,19 @@ uci show ztp 2>/dev/null | grep -o 'ztp\.@file\[[0-9]*\]' | sort -u | while read
     url=$(uci get ${section}.url 2>/dev/null)
     mode=$(uci get ${section}.mode 2>/dev/null || echo '0644')
     run=$(uci get ${section}.run 2>/dev/null)
+    file_etag=$(uci get ${section}.etag 2>/dev/null)
 
     [ -z "$url" ] && continue
 
     logger -s -t ztp "Checking file: $dest"
     file_tries=0
     while [ "$file_tries" -lt "$MAX_TRIES" ]; do
-        FILE_CODE=$(curl -s --max-time 30 -o /tmp/ztp_file.tmp -w "%{http_code}" "$url")
+        FILE_CODE=$(curl -s --max-time 30 --cert "$CLIENT_CERT" --key "$CLIENT_KEY" \
+            -o /tmp/ztp_file.tmp -D /tmp/ztp_file_headers.txt -w "%{http_code}" \
+            ${file_etag:+-H "If-None-Match: $file_etag"} \
+            "$url")
         case "$FILE_CODE" in
-            200) break ;;
+            200|304) break ;;
             *)
                 file_tries=$((file_tries + 1))
                 logger -s -t ztp "Download failed (HTTP $FILE_CODE): $url, attempt $file_tries/$MAX_TRIES"
@@ -196,10 +210,23 @@ uci show ztp 2>/dev/null | grep -o 'ztp\.@file\[[0-9]*\]' | sort -u | while read
         esac
     done
 
+    if [ "$FILE_CODE" = "304" ]; then
+        logger -s -t ztp "Unchanged: $dest"
+        rm -f /tmp/ztp_file.tmp /tmp/ztp_file_headers.txt
+        continue
+    fi
+
     if [ "$FILE_CODE" != "200" ] || [ ! -s /tmp/ztp_file.tmp ]; then
         logger -s -t ztp "Download failed after $MAX_TRIES attempts: $url"
-        rm -f /tmp/ztp_file.tmp
+        rm -f /tmp/ztp_file.tmp /tmp/ztp_file_headers.txt
         continue
+    fi
+
+    new_file_etag=$(grep -i '^etag:' /tmp/ztp_file_headers.txt | tr -d '\r' | awk '{print $2}')
+    rm -f /tmp/ztp_file_headers.txt
+    if [ -n "$new_file_etag" ]; then
+        uci set ${section}.etag="$new_file_etag"
+        uci commit ztp
     fi
 
     if ! diff -q /tmp/ztp_file.tmp "$dest" > /dev/null 2>&1; then
@@ -219,22 +246,27 @@ done
 
 SCRIPT_URL=$(uci get ztp.config.script_url 2>/dev/null)
 if [ -n "$SCRIPT_URL" ]; then
-    logger -s -t ztp "Checking for script update..."
-    curl -s -o /tmp/ztp-update.new "$SCRIPT_URL"
-    if [ -s /tmp/ztp-update.new ]; then
-        if ! diff -q /tmp/ztp-update.new /usr/sbin/ztp-update.sh > /dev/null 2>&1; then
-            logger -s -t ztp "Updating ztp-update.sh"
-            chmod +x /tmp/ztp-update.new
-            mv /tmp/ztp-update.new /usr/sbin/ztp-update.sh
+    logger -s -t ztp "Downloading script: $SCRIPT_URL"
+    curl -s --cert "$CLIENT_CERT" --key "$CLIENT_KEY" -o /tmp/ztp-script.tmp "$SCRIPT_URL"
+    if [ -s /tmp/ztp-script.tmp ]; then
+        SCRIPT_DEST=$(uci get ztp.config.script_dest 2>/dev/null)
+        if [ -n "$SCRIPT_DEST" ]; then
+            mv /tmp/ztp-script.tmp "$SCRIPT_DEST"
             if [ "$(uci get ztp.config.script_run 2>/dev/null)" = "1" ]; then
-                logger -s -t ztp "Running updated script"
-                /usr/sbin/ztp-update.sh &
+                logger -s -t ztp "Running script: $SCRIPT_DEST"
+                chmod +x "$SCRIPT_DEST"
+                "$SCRIPT_DEST"
             fi
         else
-            logger -s -t ztp "Script already up to date"
-            rm /tmp/ztp-update.new
+            if [ "$(uci get ztp.config.script_run 2>/dev/null)" = "1" ]; then
+                logger -s -t ztp "Running script"
+                chmod +x /tmp/ztp-script.tmp
+                /tmp/ztp-script.tmp
+            fi
+            rm -f /tmp/ztp-script.tmp
         fi
     else
         logger -s -t ztp "Script download failed or empty"
+        rm -f /tmp/ztp-script.tmp
     fi
 fi

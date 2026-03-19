@@ -33,7 +33,7 @@ endef
 
 define Package/megastream-ztp/install
 	$(INSTALL_DIR) $(1)/usr/sbin
-	$(INSTALL_BIN) $(CURDIR)/files/ztp-update.sh $(1)/usr/sbin/ztp-update.sh
+	$(INSTALL_BIN) $(CURDIR)/files/ztp-update $(1)/usr/sbin/ztp-update
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) $(CURDIR)/files/ztp.init $(1)/etc/init.d/ztp
 	$(INSTALL_DIR) $(1)/etc/config
