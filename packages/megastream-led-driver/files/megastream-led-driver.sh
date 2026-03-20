@@ -25,8 +25,8 @@ port_link_up() {
 check_eth_interfaces() {
     case "$BOARD" in
         ruckus,r500)
-            port_link_up 5 && set_led_path green:air 1 || set_led_path green:air 0
-            port_link_up 3 && set_led_path green:dir 1 || set_led_path green:dir 0
+            port_link_up 5 && set_led_path green:dir 1 || set_led_path green:dir 0
+            port_link_up 3 && set_led_path green:air 1 || set_led_path green:air 0
             ;;
     esac
 }
