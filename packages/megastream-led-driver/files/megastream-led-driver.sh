@@ -25,8 +25,8 @@ port_link_up() {
 check_eth_interfaces() {
     case "$BOARD" in
         ruckus,r500)
-            port_link_up 5 && set_led_path green:wlan-2ghz 1 || set_led_path green:wlan-2ghz 0
-            port_link_up 3 && set_led_path green:air 1       || set_led_path green:air 0
+            port_link_up 5 && set_led_path green:air 1 || set_led_path green:air 0
+            port_link_up 3 && set_led_path green:dir 1 || set_led_path green:dir 0
             ;;
     esac
 }
@@ -71,7 +71,7 @@ done
 BOARD=$(ubus call system board 2>/dev/null | jsonfilter -e '@.board_name')
 
 case "$BOARD" in
-    ruckus,r500) WG_LED="green:power" ;;
+    ruckus,r500) WG_LED="green:wlan-5ghz" ;;
     *)           WG_LED="green:radio1" ;;
 esac
 
