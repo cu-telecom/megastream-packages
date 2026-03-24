@@ -5,8 +5,8 @@
 DRY_RUN=0
 [ "$1" = "--test" ] && DRY_RUN=1
 
-CLIENT_CERT=$(uci get ztp.config.cert 2>/dev/null || echo "/etc/ssl/certs/client.crt")
-CLIENT_KEY=$(uci get ztp.config.key 2>/dev/null || echo "/etc/ssl/private/client.key")
+CLIENT_CERT=$(uci get ztp.config.cert 2>/dev/null || echo "/etc/ssl/certs/user.crt")
+CLIENT_KEY=$(uci get ztp.config.key 2>/dev/null || echo "/etc/ssl/private/user.key")
 
 if [ ! -f "$CLIENT_CERT" ] || [ ! -f "$CLIENT_KEY" ]; then
     logger -s -t ztp "Client cert or key not found (cert: $CLIENT_CERT, key: $CLIENT_KEY), skipping until next run"
