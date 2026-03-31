@@ -33,11 +33,12 @@ define Package/megastream-led-driver/install
 	$(INSTALL_BIN) $(CURDIR)/files/megastream-led-driver.sh $(1)/usr/bin/megastream-led-driver
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) $(CURDIR)/files/megastream-led-driver.init $(1)/etc/init.d/megastream-led-driver
+	$(INSTALL_DIR) $(1)/etc/rc.d
+	ln -sf ../init.d/megastream-led-driver $(1)/etc/rc.d/S99megastream-led-driver
 endef
 
 define Package/megastream-led-driver/postinst
 #!/bin/sh
-$${IPKG_INSTROOT}/etc/init.d/megastream-led-driver enable
 [ -n "$${IPKG_INSTROOT}" ] || /etc/init.d/megastream-led-driver start
 endef
 

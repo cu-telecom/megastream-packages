@@ -36,13 +36,14 @@ define Package/megastream-ztp/install
 	$(INSTALL_BIN) $(CURDIR)/files/ztp-update $(1)/usr/sbin/ztp-update
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) $(CURDIR)/files/ztp.init $(1)/etc/init.d/ztp
+	$(INSTALL_DIR) $(1)/etc/rc.d
+	ln -sf ../init.d/ztp $(1)/etc/rc.d/S99ztp
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) $(CURDIR)/files/ztp.conf $(1)/etc/config/ztp
 endef
 
 define Package/megastream-ztp/postinst
 #!/bin/sh
-$${IPKG_INSTROOT}/etc/init.d/ztp enable
 [ -n "$${IPKG_INSTROOT}" ] || /etc/init.d/ztp start
 endef
 
