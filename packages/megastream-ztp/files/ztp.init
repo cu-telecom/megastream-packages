@@ -5,19 +5,10 @@ STOP=10
 USE_PROCD=1
 
 start_service() {
-    # Register hourly cron job if not already present
-    grep -q 'ztp-update' /etc/crontabs/root 2>/dev/null || {
-        echo "0 * * * * /usr/sbin/ztp-update" >> /etc/crontabs/root
-        /etc/init.d/cron restart
-    }
-
     procd_open_instance
     procd_set_param command /usr/sbin/ztp-update
-    procd_set_param oneshot 1
+    procd_set_param respawn 3600 5 0
+    procd_set_param stdout 1
+    procd_set_param stderr 1
     procd_close_instance
-}
-
-stop_service() {
-    sed -i '/ztp-update/d' /etc/crontabs/root
-    /etc/init.d/cron restart
 }
