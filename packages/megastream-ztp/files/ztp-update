@@ -15,7 +15,7 @@ fi
 
 SERVER=$(uci get ztp.config.server 2>/dev/null || echo "http://192.168.1.1/config")
 MAC=$(cat /sys/class/net/$(uci get network.wan.device)/address | tr -d ':' | awk '{print toupper($0)}')
-CONFIG_URL="${SERVER}/${MAC}/config.uci"
+CONFIG_URL="${SERVER}/config/${MAC}/config.uci"
 
 ETAG=$(uci get ztp.config.etag 2>/dev/null)
 TMP_CONFIG="/tmp/ztp_pending.uci"
