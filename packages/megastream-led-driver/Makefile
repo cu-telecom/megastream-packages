@@ -37,7 +37,8 @@ endef
 
 define Package/megastream-led-driver/postinst
 #!/bin/sh
-[ -n "$${IPKG_INSTROOT}" ] || /etc/init.d/megastream-led-driver enable
+$${IPKG_INSTROOT}/etc/init.d/megastream-led-driver enable
+[ -n "$${IPKG_INSTROOT}" ] || /etc/init.d/megastream-led-driver start
 endef
 
 $(eval $(call BuildPackage,megastream-led-driver))

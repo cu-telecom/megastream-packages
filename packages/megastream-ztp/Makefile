@@ -42,7 +42,8 @@ endef
 
 define Package/megastream-ztp/postinst
 #!/bin/sh
-[ -n "$${IPKG_INSTROOT}" ] || /etc/init.d/ztp enable
+$${IPKG_INSTROOT}/etc/init.d/ztp enable
+[ -n "$${IPKG_INSTROOT}" ] || /etc/init.d/ztp start
 endef
 
 $(eval $(call BuildPackage,megastream-ztp))
