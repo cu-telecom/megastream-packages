@@ -103,8 +103,8 @@ while true; do
     for pkg in $(grep '^package ' "$TMP_CONFIG" | awk '{print $2}'); do
         [ "$pkg" = "ztp" ] && continue
 
-        current=$(uci export "$pkg" 2>/dev/null)
-        incoming=$(extract_package "$pkg")
+        current=$(uci export "$pkg" 2>/dev/null | sed 's/^[[:space:]]*//')
+        incoming=$(extract_package "$pkg" | sed 's/^[[:space:]]*//')
 
         if [ "$current" != "$incoming" ]; then
             CHANGED_PKGS="$CHANGED_PKGS $pkg"
